@@ -30,6 +30,32 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Shell
+    |--------------------------------------------------------------------------
+    |
+    | This option defines the executable used to run commands. When set to
+    | null, PowerShell is used on Windows. On other systems, bash is used
+    | when available, otherwise /bin/sh.
+    |
+    */
+
+    'shell' => env('LARAVEL_SHELL_SHELL'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Command Timeout
+    |--------------------------------------------------------------------------
+    |
+    | This option defines the maximum number of seconds a command may run.
+    | Commands exceeding this limit are terminated. Web server and proxy
+    | timeouts still apply and should be greater than this value.
+    |
+    */
+
+    'timeout' => env('LARAVEL_SHELL_TIMEOUT', 60),
+
+    /*
+    |--------------------------------------------------------------------------
     | Terminal Customization
     |--------------------------------------------------------------------------
     |

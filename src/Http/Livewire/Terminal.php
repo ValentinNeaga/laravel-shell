@@ -2,10 +2,13 @@
 
 namespace Jakyeru\LaravelShell\Http\Livewire;
 
+use Illuminate\Process\Exceptions\ProcessTimedOutException;
+use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use Jakyeru\LaravelShell\Rules\CommandRule;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
+use Symfony\Component\Process\ExecutableFinder;
 
 class Terminal extends Component
 {
@@ -17,12 +20,19 @@ class Terminal extends Component
     public string $currentDirectory;
 
     /**
+     * The previous directory.
+     *
+     * @var string
+     */
+    public string $previousDirectory;
+
+    /**
      * Mount the component.
      */
     #[Layout('laravel-shell::layouts.app')]
     public function mount(): void
     {
-        $this->changeDirectory(base_path(), false);
+        $this->currentDirectory = $this->previousDirectory = $this->normalizePath(base_path());
     }
 
     /**
@@ -35,17 +45,24 @@ class Terminal extends Component
 
     /**
      * Run a command.
+     *
+     * @return array{output: array<int, string>, directory: string}
      */
-    public function runCommand(string $command): void
+    public function runCommand(string $command): array
     {
         $command = trim($command);
 
-        chdir($this->currentDirectory);
+        if (! is_dir($this->currentDirectory)) {
+            $missingDirectory = $this->currentDirectory;
 
-        if ($command === 'cd' || Str::startsWith($command, 'cd ')) {
-            $target = trim(substr($command, 2));
-            $this->changeDirectory($target === '' ? base_path() : $target);
-            return;
+            $this->changeDirectory(base_path());
+
+            return $this->response([
+                __('The directory :directory no longer exists. Changed directory to :base.', [
+                    'directory' => $missingDirectory,
+                    'base' => $this->currentDirectory,
+                ]),
+            ]);
         }
 
         $validator = validator(['command' => $command], [
@@ -53,47 +70,166 @@ class Terminal extends Component
         ]);
 
         if ($validator->fails()) {
-            $this->dispatch('laravel-shell:terminal-output', ['output' => [$validator->errors()->first()]]);
-            return;
+            return $this->response([$validator->errors()->first()]);
         }
 
-        $output = [];
+        if ($command === 'cd') {
+            $this->changeDirectory(base_path());
 
-        exec($this->shellCommand($command) . ' 2>&1', $output);
+            return $this->response([]);
+        }
 
-        $output = array_map('rtrim', $output);
+        $marker = '__LARAVEL_SHELL_'.Str::random(32).'__';
+        $arguments = $this->processArguments($command, $marker);
+        $timeout = (int) config('laravel-shell.timeout', 60);
+        $output = '';
+        $timedOut = false;
 
-        $this->dispatch('laravel-shell:terminal-output', ['output' => array_values($output)]);
+        $process = Process::path($this->currentDirectory)
+            ->timeout($timeout)
+            ->env(['OLDPWD' => $this->previousDirectory])
+            ->start($arguments, function (string $type, string $buffer) use (&$output) {
+                $output .= $buffer;
+            });
+
+        $pid = $process->id();
+
+        try {
+            $process->wait();
+        } catch (ProcessTimedOutException) {
+            $timedOut = true;
+
+            if ($pid && basename($arguments[0]) === 'setsid') {
+                $this->killProcessGroup($pid);
+            }
+        }
+
+        if (($position = strrpos($output, $marker)) !== false) {
+            $remainder = explode("\n", ltrim(substr($output, $position + strlen($marker)), "\r\n"), 2);
+            $directory = trim($remainder[0]);
+
+            $output = substr($output, 0, $position).($remainder[1] ?? '');
+
+            if ($directory !== '' && is_dir($directory)) {
+                $this->changeDirectory($directory);
+            }
+        }
+
+        $lines = $this->outputLines($output);
+
+        if ($timedOut) {
+            $lines[] = "\x1b[31;1mError:\x1b[0m ".__('The command exceeded the timeout of :seconds seconds and was terminated.', ['seconds' => $timeout]);
+        }
+
+        return $this->response($lines);
     }
 
     /**
      * Change the current directory.
      */
-    public function changeDirectory(string $directory, bool $dispatch = true): void
+    protected function changeDirectory(string $directory): void
     {
-        if (! is_dir($directory)) {
-            $this->dispatch('laravel-shell:terminal-output', ['output' => [__('Directory does not exist.')]]);
-            return;
-        }
+        $directory = $this->normalizePath($directory);
 
-        chdir($directory);
-
-        $this->currentDirectory = str_replace('\\', '/', getcwd());
-
-        if ($dispatch) {
-            $this->dispatch('laravel-shell:directory-change', ['directory' => $this->currentDirectory]);
+        if ($directory !== $this->currentDirectory) {
+            $this->previousDirectory = $this->currentDirectory;
+            $this->currentDirectory = $directory;
         }
     }
 
     /**
-     * Create the shell command for the current operating system.
-     **/
-    protected function shellCommand(string $command): string
+     * Normalize the given directory path.
+     */
+    protected function normalizePath(string $directory): string
     {
-        if (PHP_OS_FAMILY === 'Windows') {
-            return 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command ' . escapeshellarg($command);
+        return str_replace('\\', '/', realpath($directory) ?: $directory);
+    }
+
+    /**
+     * Create the response sent to the terminal.
+     *
+     * @param  array<int, string>  $output
+     * @return array{output: array<int, string>, directory: string}
+     */
+    protected function response(array $output): array
+    {
+        return [
+            'output' => $output,
+            'directory' => $this->currentDirectory,
+        ];
+    }
+
+    /**
+     * Split the process output into lines.
+     *
+     * @return array<int, string>
+     */
+    protected function outputLines(string $output): array
+    {
+        $output = rtrim(str_replace("\r\n", "\n", $output));
+
+        return $output === '' ? [] : array_map('rtrim', explode("\n", $output));
+    }
+
+    /**
+     * Create the process arguments for the configured shell.
+     *
+     * @return array<int, string>
+     */
+    protected function processArguments(string $command, string $marker): array
+    {
+        $shell = config('laravel-shell.shell') ?: $this->defaultShell();
+
+        if (preg_match('/^(powershell|pwsh)(\.exe)?$/i', basename($shell))) {
+            $script = implode("\n", [
+                $command,
+                "Write-Output ''",
+                "Write-Output '{$marker}'",
+                '(Get-Location).Path',
+            ]);
+
+            return [$shell, '-NoProfile', '-NonInteractive', '-EncodedCommand', base64_encode(mb_convert_encoding($script, 'UTF-16LE', 'UTF-8'))];
         }
 
-        return 'bash -c ' . escapeshellarg($command);
+        $script = implode("\n", [
+            'exec 2>&1',
+            $command,
+            "printf '\\n%s\\n' '{$marker}'",
+            'pwd',
+        ]);
+
+        $arguments = [$shell, '-c', $script];
+
+        if ($setsid = (new ExecutableFinder)->find('setsid', null, ['/usr/bin', '/bin'])) {
+            array_unshift($arguments, $setsid);
+        }
+
+        return $arguments;
+    }
+
+    /**
+     * Get the default shell for the current operating system.
+     */
+    protected function defaultShell(): string
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+        }
+
+        return (new ExecutableFinder)->find('bash', '/bin/sh', ['/bin', '/usr/bin', '/usr/local/bin']);
+    }
+
+    /**
+     * Kill every process in the given process group.
+     */
+    protected function killProcessGroup(int $pid): void
+    {
+        if (function_exists('posix_kill')) {
+            posix_kill(-$pid, 9);
+
+            return;
+        }
+
+        Process::run(['kill', '-KILL', '--', '-'.$pid]);
     }
 }
