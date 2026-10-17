@@ -7,13 +7,13 @@
     <title>Laravel Shell</title>
 
     <!-- Styles -->
-    <link href="{{ route('laravel-shell.assets.serve', 'xterm.css') }}" rel="stylesheet">
+    <link href="{{ route('laravel-shell.assets.serve', ['asset' => 'xterm.css', 'v' => \Jakyeru\LaravelShell\LaravelShellServiceProvider::VERSION]) }}" rel="stylesheet">
     @livewireStyles
 </head>
 <body style="background-color: {{ config('laravel-shell.terminal.colors.background') }};">
     {{ $slot }}
     <!-- Scripts -->
     @livewireScripts
-    <script src="{{ route('laravel-shell.assets.serve', 'xterm.js') }}"></script>
+    <script src="{{ route('laravel-shell.assets.serve', ['asset' => 'xterm.js', 'v' => \Jakyeru\LaravelShell\LaravelShellServiceProvider::VERSION]) }}"></script>
 </body>
 </html>

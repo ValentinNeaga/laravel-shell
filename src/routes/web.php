@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Jakyeru\LaravelShell\Http\Livewire\Terminal;
+use Jakyeru\LaravelShell\Http\Middleware\Authorize;
 
 /*
 |--------------------------------------------------------------------------
@@ -12,7 +13,7 @@ use Jakyeru\LaravelShell\Http\Livewire\Terminal;
 */
 
 Route::group(config('laravel-shell.route'), function () {
-    Route::get('/', Terminal::class)->name('laravel-shell.terminal');
+    Route::get('/', Terminal::class)->middleware(Authorize::class)->name('laravel-shell.terminal');
 });
 
 require __DIR__.'/assets.php';

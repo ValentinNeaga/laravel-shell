@@ -24,11 +24,90 @@ You can install the package via composer:
 composer require jakyeru/laravel-shell
 ```
 After installing you can navigate to `/laravel-shell` to access the terminal.
-> [!CAUTION]
-> It is recommended that you secure your terminal with a middleware by publishing the configuration.
+
+To customize the package, publish the configuration file:
 ```bash
 php artisan vendor:publish --provider="Jakyeru\LaravelShell\LaravelShellServiceProvider" --tag="config"
 ```
+
+# Security
+> [!CAUTION]
+> Laravel-Shell executes arbitrary shell commands as the web server user. Restrict access before enabling it in any environment other than `local`.
+
+## Authorization
+Access to the terminal is controlled by the `viewLaravelShell` gate. By default, the gate grants access only when the application environment is `local`. All other requests receive a `403` response.
+
+To grant access in other environments, define the gate in the `boot` method of your `App\Providers\AppServiceProvider`:
+
+```php
+use App\Models\User;
+use Illuminate\Support\Facades\Gate;
+
+public function boot(): void
+{
+    Gate::define('viewLaravelShell', function (User $user) {
+        return in_array($user->email, [
+            'admin@example.com',
+        ]);
+    });
+}
+```
+
+The gate is checked on the initial page request and on every subsequent Livewire request made by the terminal. A gate with a non-nullable `$user` parameter denies all guests.
+
+## Middleware
+The `route.middleware` option defines the middleware applied to the terminal routes. To require authentication and a recent password confirmation, add the `auth` and `password.confirm` middleware:
+
+```php
+'route' => [
+    'prefix' => 'laravel-shell',
+    'middleware' => ['web', 'auth', 'password.confirm'],
+],
+```
+
+The `password.confirm` middleware requires the application to define a `password.confirm` route, which is provided by Laravel's starter kits.
+
+## Command Policies
+The `commands` option defines which commands may be executed. Patterns support the `*` wildcard.
+
+```php
+'commands' => [
+    'allowed' => [
+        'php artisan *',
+        'composer install*',
+        'git pull',
+    ],
+    'blocked' => [
+        'php artisan tinker*',
+        'php artisan serve*',
+        'php artisan queue:work*',
+        'php artisan queue:listen*',
+        'php artisan schedule:work*',
+    ],
+],
+```
+
+- `allowed`: When not empty, a command is executed only if it matches at least one pattern. Commands containing shell operators (`;`, `&`, `|`, `<`, `>`, `` ` ``, `$(` or line breaks) are rejected.
+- `blocked`: A command is rejected if any segment separated by a shell operator matches a pattern. The default list rejects long-running commands that would block the PHP process.
+
+The `blocked` list is not a security boundary, since a blocked command can be invoked through other means, such as a script or an alias. Use the `allowed` list to restrict execution.
+
+The `cd` command is handled by the package and is not subject to command policies.
+
+## Audit Logging
+Every command is written to the application log with the authenticated user ID, IP address, user agent, working directory, exit code and duration. Rejected commands are logged with the `warning` level.
+
+```php
+'logging' => [
+    'enabled' => env('LARAVEL_SHELL_LOGGING', true),
+    'channel' => env('LARAVEL_SHELL_LOG_CHANNEL'),
+],
+```
+
+When `channel` is `null`, the application's default log channel is used. To write the audit log to a dedicated file, define a channel in `config/logging.php` and set `LARAVEL_SHELL_LOG_CHANNEL` to its name.
+
+## Disabling the Terminal
+Set `LARAVEL_SHELL_ENABLED=false` to unregister the routes, views and components of the package.
 
 # Version Compatibility
 > [!NOTE]

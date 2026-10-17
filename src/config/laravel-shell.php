@@ -30,6 +30,46 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Command Policies
+    |--------------------------------------------------------------------------
+    |
+    | The "allowed" list restricts execution to commands matching at least one
+    | of the given patterns. When the list is not empty, shell operators such
+    | as ";", "&&", "|", ">", "`" and "$(" are rejected. An empty list allows
+    | any command. The "blocked" list rejects any command segment matching one
+    | of the given patterns. Patterns support the "*" wildcard.
+    |
+    */
+
+    'commands' => [
+        'allowed' => [],
+        'blocked' => [
+            'php artisan tinker*',
+            'php artisan serve*',
+            'php artisan queue:work*',
+            'php artisan queue:listen*',
+            'php artisan schedule:work*',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Audit Logging
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, every command is written to the given log channel along
+    | with the user, IP address, working directory, exit code and duration.
+    | A null channel uses the application's default log channel.
+    |
+    */
+
+    'logging' => [
+        'enabled' => env('LARAVEL_SHELL_LOGGING', true),
+        'channel' => env('LARAVEL_SHELL_LOG_CHANNEL'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Terminal Customization
     |--------------------------------------------------------------------------
     |

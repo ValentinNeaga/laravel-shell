@@ -2,6 +2,7 @@
 
 namespace Jakyeru\LaravelShell;
 
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Livewire\Livewire;
 
@@ -26,6 +27,7 @@ class LaravelShellServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->publishConfig();
+        $this->defineGate();
 
         if (config('laravel-shell.enabled')) {
             $this->registerRoutes();
@@ -50,6 +52,22 @@ class LaravelShellServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/config/laravel-shell.php' => config_path('laravel-shell.php'),
         ], 'config');
+    }
+
+    /**
+     * Define the default authorization gate.
+     *
+     * The gate grants access in the local environment only. It is defined
+     * after the application has booted and only when the application has not
+     * defined its own "viewLaravelShell" gate.
+     */
+    protected function defineGate(): void
+    {
+        $this->app->booted(function () {
+            if (! Gate::has('viewLaravelShell')) {
+                Gate::define('viewLaravelShell', fn ($user = null) => $this->app->environment('local'));
+            }
+        });
     }
 
     /**
